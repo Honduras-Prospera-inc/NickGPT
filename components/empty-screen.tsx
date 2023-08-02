@@ -11,7 +11,7 @@ const exampleMessages = [
   },
   {
     heading: 'Overtime requirements',
-    message: 'What are the overtime reuirements in Próspera?'
+    message: 'What are the overtime requirements in Próspera?'
   },
   {
     heading: 'Regulatory questions',
