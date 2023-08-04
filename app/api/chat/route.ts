@@ -8,7 +8,6 @@ import { nanoid } from '@/lib/utils'
 export const runtime = 'edge'
 
 const configuration = new Configuration({
-  //apiKey: 'ASStn8eNtkg87W5wemGhcMfOPxJ8/hyVaabGZ0tmsj8=' local version
   apiKey: process.env.TENNR_API_KEY
 })
 
@@ -30,10 +29,7 @@ export async function POST(req: Request) {
       configuration.apiKey = previewToken
     }
 
-    // Authorization: `api-key ASStn8eNtkg87W5wemGhcMfOPxJ8/hyVaabGZ0tmsj8=` local version
-    //const agentId = '64c5709065736e592c4b67cf' local version
-    const agentId = '644b3fbae8f5dfe23bd06482'
-    //const agentUrl = 'http://localhost:4000' local version
+    const agentId = '64a6d52d468f496e44592fa6'
     const agentUrl = 'https://agent.tennr.com'
     var streamIt = true
 
@@ -42,7 +38,7 @@ export async function POST(req: Request) {
       mode: 'cors',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `api-key ${process.env.TENNR_API_KEY}` //gv8pzQgsLyTInP4mO02VSkMdA0zxsL97iRkAMw33NRU=`
+        Authorization: `api-key ${process.env.TENNR_API_KEY}`
       },
       body: JSON.stringify({
         agentId: agentId,
