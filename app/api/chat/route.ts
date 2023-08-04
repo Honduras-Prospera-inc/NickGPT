@@ -1,22 +1,11 @@
-import { kv } from '@vercel/kv'
-import { OpenAIStream, StreamingTextResponse } from 'ai'
-import { Configuration, OpenAIApi } from 'openai-edge'
+import { StreamingTextResponse } from 'ai'
 
 import { auth } from '@/auth'
-import { nanoid } from '@/lib/utils'
-
-export const runtime = 'edge'
-
-const configuration = new Configuration({
-  apiKey: process.env.TENNR_API_KEY
-})
-
-const openai = new OpenAIApi(configuration)
 
 export async function POST(req: Request) {
   try {
     const json = await req.json()
-    const { messages, previewToken } = json
+    const { messages } = json
     const userId = (await auth())?.user.id
 
     if (!userId) {
@@ -25,13 +14,8 @@ export async function POST(req: Request) {
       })
     }
 
-    if (previewToken) {
-      configuration.apiKey = previewToken
-    }
-
-    const agentId = '64a6d52d468f496e44592fa6'
+    const agentId = process.env.TENNR_AGENT_ID
     const agentUrl = 'https://agent.tennr.com'
-    var streamIt = true
 
     const response = await fetch(agentUrl + '/api/v1/workflow/run', {
       method: 'POST',
@@ -43,70 +27,76 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         agentId: agentId,
         input: messages[messages.length - 1].content,
-        stream: streamIt,
+        stream: true,
         messages: messages
       })
     })
 
-    let responseStream
-    if (streamIt) {
-      const responseText = await response.text()
-
-      const messageArr = responseText
-        .split('\n\n')
-        .filter(message => message.startsWith('data:'))
-        .map(message => message.slice('data: '.length))
-
-      const combinedMessages = messageArr.join('')
-
-      // Removing the unwanted part
-      const cleanedMessages = combinedMessages
-        .replace(/{"sources":\[.*\]}/, '')
-        .trim()
-
-      const processedMessages = createWordArray(cleanedMessages)
-      responseStream = arrayToStream(processedMessages)
-      console.log('final product for streaming: ', processedMessages)
-    } else {
-      const responseJson = JSON.parse(await response.text())
-      const outputText = responseJson.output // Extract the output text.
-      responseStream = stringToStream(outputText)
-      console.log('Final product for non-streaming: ', outputText)
-    }
-
+    const responseStream = customLogicToStream(response)
     return new StreamingTextResponse(responseStream)
   } catch (e) {
     console.error(e)
   }
 }
 
-function stringToStream(response: string) {
+function customLogicToStream(response: Response) {
+  const reader = response?.body?.getReader()
+  if (!reader) throw new Error('No reader created.')
+
+  const decoder = new TextDecoder('utf-8')
+  let messageAccumulator = ''
+  let currResponseMessage = ''
+
   return new ReadableStream({
     start(controller) {
-      controller.enqueue(new TextEncoder().encode(response))
-      controller.close()
-    }
-  })
-}
+      const read = async () => {
+        const { done, value } = await reader.read()
+        if (done) {
+          controller.close()
+          return
+        }
+        const decodedValue = decoder.decode(value)
+        messageAccumulator += decodedValue
 
-function arrayToStream(array: string[]) {
-  let currentIndex = 0
+        const messages = messageAccumulator.split('\n\n')
+        messageAccumulator = messages.pop() || ''
 
-  return new ReadableStream({
-    pull(controller) {
-      if (currentIndex >= array.length) {
-        controller.close()
-      } else {
-        // Append a newline and enqueue the message as is, without JSON.stringify
-        const text = array[currentIndex] + '\n'
-        controller.enqueue(new TextEncoder().encode(text))
-        currentIndex++
+        for (let message of messages) {
+          message = message
+            .split('\n')
+            .map(line => line.replace(/^data: /, ''))
+            .join('\n')
+
+          if (message === '[DONE]') continue
+
+          if (message.indexOf(`"statusUpdate":`) !== -1) {
+            try {
+              const statusUpdateParsed = JSON.parse(message)
+              const statusUpdate = statusUpdateParsed?.statusUpdate
+
+              if (
+                statusUpdate &&
+                statusUpdate.output &&
+                statusUpdate.stepType === 'GENERATE_ANSWER'
+              ) {
+                let outputText = statusUpdate.output.replace(/<br\/>/g, '\n') // replace <br/> with newline
+                outputText = outputText.replace(/&amp;/g, '&') // replace &amp; with &
+                // add similar replacements for other HTML entities if needed
+
+                const newPart = outputText.slice(currResponseMessage.length)
+                if (newPart.length > 0) {
+                  controller.enqueue(new TextEncoder().encode(newPart))
+                }
+                currResponseMessage = outputText
+              }
+            } catch (e) {
+              console.error('Failed to parse status update.', e)
+            }
+          }
+        }
+        read()
       }
+      read()
     }
   })
-}
-
-function createWordArray(text: string): string[] {
-  const wordArray = text.split(' ')
-  return wordArray
 }
